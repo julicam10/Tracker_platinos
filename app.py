@@ -1,46 +1,79 @@
 import streamlit as st
 import pandas as pd
 from bs4 import BeautifulSoup
-import os
+import gspread
+from google.oauth2.service_account import Credentials
+import json
 
 st.set_page_config(page_title="Tracker de Platinos", page_icon="🎮", layout="wide")
 st.title("🎮 Mi Tracker de Platinos")
 
+# --- CONFIGURACIÓN DE GOOGLE SHEETS ---
+URL_SHEET = "https://docs.google.com/spreadsheets/d/1MLUSLjdDc903Z5SM8h65UtJgKw5w-Bsh_FUoHjzgDWg/edit?usp=drive_link" # REEMPLAZA ESTO CON TU URL REAL
+
+@st.cache_resource
+def init_connection():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    # Carga las credenciales desde los secretos de Streamlit
+    creds_dict = json.loads(st.secrets["gcp_json"])
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    client = gspread.authorize(creds)
+    return client.open_by_url(URL_SHEET)
+
+sheet = init_connection()
+
+def load_data(tab_name, cols):
+    ws = sheet.worksheet(tab_name)
+    records = ws.get_all_records()
+    if records:
+        return pd.DataFrame(records)
+    return pd.DataFrame(columns=cols)
+
+def save_data(tab_name, df):
+    ws = sheet.worksheet(tab_name)
+    ws.clear()
+    if not df.empty:
+        datos = [df.columns.values.tolist()] + df.fillna("").astype(str).values.tolist()
+        ws.update(datos)
+    else:
+        ws.update([df.columns.values.tolist()])
+
 st.markdown("""
     <style>
-        dataframe, th, td {
-            text-align: center !important;
-        }
-        div[data-testid="stDataFrame"] th {
-            text-align: center !important;
-        }
+        dataframe, th, td { text-align: center !important; }
+        div[data-testid="stDataFrame"] th { text-align: center !important; }
     </style>
 """, unsafe_allow_html=True)
 
+# --- CARGA INICIAL DE DATOS DESDE LA NUBE ---
+cols_juegos = ['Juego', 'Platino_Obtenido', 'Trofeos_Faltantes', 'Ultima_Actualizacion']
+cols_trofeos = ['Juego', 'Categoria', 'Trofeo', 'Descripcion', 'Estado']
+
+df_juegos = load_data('mis_juegos', cols_juegos)
+df_trofeos = load_data('trofeos', cols_trofeos)
+
 # --- PANEL DE MÉTRICAS GLOBALES (KPIs) ---
-if os.path.exists('mis_juegos.csv') and os.path.exists('trofeos.csv'):
-    df_juegos_kpi = pd.read_csv('mis_juegos.csv')
-    df_trofeos_kpi = pd.read_csv('trofeos.csv')
+col1, col2, col3 = st.columns(3)
+total_juegos = len(df_juegos)
+total_platinos = len(df_juegos[df_juegos['Platino_Obtenido'] == 'Sí']) if not df_juegos.empty else 0
+total_trofeos = len(df_trofeos)
+trofeos_completados = len(df_trofeos[df_trofeos['Estado'] == 'Completado']) if not df_trofeos.empty else 0
 
-    col1, col2, col3 = st.columns(3)
-    
-    total_juegos = len(df_juegos_kpi)
-    total_platinos = len(df_juegos_kpi[df_juegos_kpi['Platino_Obtenido'] == 'Sí'])
-    total_trofeos = len(df_trofeos_kpi)
-    trofeos_completados = len(df_trofeos_kpi[df_trofeos_kpi['Estado'] == 'Completado'])
-    
-    col1.metric("Juegos Registrados", total_juegos)
-    col2.metric("Platinos Conseguidos", total_platinos)
-    
-    if total_trofeos > 0:
-        progreso_global = (trofeos_completados / total_trofeos) * 100
-        col3.write("Progreso Global:")
-        col3.progress(progreso_global / 100)
-        col3.caption(f"{trofeos_completados} de {total_trofeos} trofeos obtenidos")
-    
-    st.markdown("---")
+col1.metric("Juegos Registrados", total_juegos)
+col2.metric("Platinos Conseguidos", total_platinos)
 
-# 0. Botón para agregar juego manually
+if total_trofeos > 0:
+    progreso_global = (trofeos_completados / total_trofeos) * 100
+    col3.write("Progreso Global:")
+    col3.progress(progreso_global / 100)
+    col3.caption(f"{trofeos_completados} de {total_trofeos} trofeos obtenidos")
+
+st.markdown("---")
+
+# 0. Botón para agregar juego manualmente
 with st.expander("➕ Agregar nuevo juego manualmente"):
     with st.form("form_nuevo_juego", clear_on_submit=True):
         nuevo_nombre = st.text_input("Nombre del juego:")
@@ -48,15 +81,15 @@ with st.expander("➕ Agregar nuevo juego manualmente"):
         
         if submit_juego:
             if nuevo_nombre:
-                if os.path.exists('mis_juegos.csv'):
-                    df_juegos = pd.read_csv('mis_juegos.csv')
-                else:
-                    df_juegos = pd.DataFrame(columns=['Juego', 'Platino_Obtenido', 'Trofeos_Faltantes', 'Ultima_Actualizacion'])
-                
                 if nuevo_nombre not in df_juegos['Juego'].values:
-                    nuevo_juego = {'Juego': nuevo_nombre, 'Platino_Obtenido': 'No', 'Trofeos_Faltantes': 0, 'Ultima_Actualizacion': pd.Timestamp.today().strftime('%Y-%m-%d')}
+                    nuevo_juego = {
+                        'Juego': nuevo_nombre, 
+                        'Platino_Obtenido': 'No', 
+                        'Trofeos_Faltantes': 0, 
+                        'Ultima_Actualizacion': pd.Timestamp.today().strftime('%Y-%m-%d')
+                    }
                     df_juegos = pd.concat([df_juegos, pd.DataFrame([nuevo_juego])], ignore_index=True)
-                    df_juegos.to_csv('mis_juegos.csv', index=False)
+                    save_data('mis_juegos', df_juegos)
                     st.success(f"¡{nuevo_nombre} añadido a tu lista!")
                     st.rerun()
                 else:
@@ -76,11 +109,6 @@ if archivo_subido is not None:
         else:
             soup = BeautifulSoup(archivo_subido, 'html.parser')
             
-            if os.path.exists('trofeos.csv'):
-                df_trofeos = pd.read_csv('trofeos.csv')
-            else:
-                df_trofeos = pd.DataFrame(columns=['Juego', 'Categoria', 'Trofeo', 'Descripcion', 'Estado'])
-            
             if 'Juego' in df_trofeos.columns:
                 df_trofeos = df_trofeos[df_trofeos['Juego'] != nombre_juego]
 
@@ -96,7 +124,6 @@ if archivo_subido is not None:
                 if a_title:
                     titulo = a_title.text.strip()
                     if titulo and not titulo.lower() in [nombre_juego.lower(), "julianespitia10"]:
-                        
                         descripcion = "Sin descripción"
                         celda = a_title.find_parent('td')
                         if celda:
@@ -117,50 +144,45 @@ if archivo_subido is not None:
             if nuevos_datos:
                 df_nuevos = pd.DataFrame(nuevos_datos)
                 df_trofeos = pd.concat([df_trofeos, df_nuevos], ignore_index=True)
-                df_trofeos.to_csv('trofeos.csv', index=False)
-                
-            if os.path.exists('mis_juegos.csv'):
-                df_juegos = pd.read_csv('mis_juegos.csv')
-            else:
-                df_juegos = pd.DataFrame(columns=['Juego', 'Platino_Obtenido', 'Trofeos_Faltantes', 'Ultima_Actualizacion'])
+                save_data('trofeos', df_trofeos)
                 
             if nombre_juego not in df_juegos['Juego'].values:
-                nuevo_juego = {'Juego': nombre_juego, 'Platino_Obtenido': 'No', 'Trofeos_Faltantes': len(nuevos_datos), 'Ultima_Actualizacion': pd.Timestamp.today().strftime('%Y-%m-%d')}
+                nuevo_juego = {
+                    'Juego': nombre_juego, 
+                    'Platino_Obtenido': 'No', 
+                    'Trofeos_Faltantes': len(nuevos_datos), 
+                    'Ultima_Actualizacion': pd.Timestamp.today().strftime('%Y-%m-%d')
+                }
                 df_juegos = pd.concat([df_juegos, pd.DataFrame([nuevo_juego])], ignore_index=True)
             else:
                 idx_j = df_juegos[df_juegos['Juego'] == nombre_juego].index[0]
                 df_juegos.at[idx_j, 'Trofeos_Faltantes'] = len(nuevos_datos)
                 
-            df_juegos.to_csv('mis_juegos.csv', index=False)
+            save_data('mis_juegos', df_juegos)
             st.sidebar.success(f"¡{nombre_juego} importado con éxito ({len(nuevos_datos)} trofeos)!")
             st.rerun()
 
 # 2. Sincronización y Visualización de Juegos
-if os.path.exists('mis_juegos.csv') and os.path.exists('trofeos.csv'):
-    df_juegos = pd.read_csv('mis_juegos.csv')
-    df_trofeos = pd.read_csv('trofeos.csv')
-    
-    for idx, row in df_juegos.iterrows():
-        juego = row['Juego']
-        trofeos_juego = df_trofeos[df_trofeos['Juego'] == juego]
-        if not trofeos_juego.empty:
-            pendientes = len(trofeos_juego[trofeos_juego['Estado'] == 'Pendiente'])
-            df_juegos.at[idx, 'Trofeos_Faltantes'] = pendientes
-            df_juegos.at[idx, 'Platino_Obtenido'] = 'Sí' if pendientes == 0 else 'No'
-            
-    df_juegos.to_csv('mis_juegos.csv', index=False)
+for idx, row in df_juegos.iterrows():
+    juego = row['Juego']
+    trofeos_juego = df_trofeos[df_trofeos['Juego'] == juego]
+    if not trofeos_juego.empty:
+        pendientes = len(trofeos_juego[trofeos_juego['Estado'] == 'Pendiente'])
+        df_juegos.at[idx, 'Trofeos_Faltantes'] = pendientes
+        df_juegos.at[idx, 'Platino_Obtenido'] = 'Sí' if pendientes == 0 else 'No'
+        
+save_data('mis_juegos', df_juegos)
 
 st.subheader("Tus Juegos Registrados")
-if os.path.exists('mis_juegos.csv'):
-    df_juegos = pd.read_csv('mis_juegos.csv')
+if not df_juegos.empty:
     st.dataframe(df_juegos, use_container_width=True, hide_index=True)
 
 # 3. Gestión de Trofeos con KPIs, Filtros y Pestañas
 st.subheader("Gestión de Trofeos")
-if os.path.exists('trofeos.csv'):
-    df_trofeos = pd.read_csv('trofeos.csv')
-    if 'Juego' in df_trofeos.columns and not df_trofeos.empty:
-        juego_seleccionado = st.selectbox("Selecciona un juego:", df_trofeos['Juego'].unique())
+if not df_trofeos.empty:
+    juegos_disponibles = df_trofeos['Juego'].unique()
+    if len(juegos_disponibles) > 0:
+        juego_seleccionado = st.selectbox("Selecciona un juego:", juegos_disponibles)
         
         # --- MÉTRICAS ESPECÍFICAS DEL JUEGO ---
         trofeos_del_juego = df_trofeos[df_trofeos['Juego'] == juego_seleccionado]
@@ -177,16 +199,11 @@ if os.path.exists('trofeos.csv'):
                 st.progress(completados_j / total_j)
                 st.caption(f"Te faltan {faltantes_j} trofeos para completarlo al 100%")
         
-        st.write("") # Espacio visual
+        st.write("") 
         
         # --- FILTRO AVANZADO ---
-        filtro_estado = st.radio(
-            "Filtro de visualización:", 
-            ["Todos", "Pendientes", "Completados"], 
-            horizontal=True
-        )
-        st.write("") # Espacio visual
-        # -----------------------
+        filtro_estado = st.radio("Filtro de visualización:", ["Todos", "Pendientes", "Completados"], horizontal=True)
+        st.write("") 
         
         categorias = df_trofeos[df_trofeos['Juego'] == juego_seleccionado]['Categoria'].dropna().unique().tolist()
         
@@ -195,17 +212,14 @@ if os.path.exists('trofeos.csv'):
             
             for i, cat in enumerate(categorias):
                 with tabs[i]:
-                    # Filtramos primero por juego y categoría
                     trofeos_cat = df_trofeos[(df_trofeos['Juego'] == juego_seleccionado) & (df_trofeos['Categoria'] == cat)]
                     
-                    # Aplicamos el filtro seleccionado por el usuario
                     if filtro_estado == "Pendientes":
                         trofeos_cat = trofeos_cat[trofeos_cat['Estado'] == 'Pendiente']
                     elif filtro_estado == "Completados":
                         trofeos_cat = trofeos_cat[trofeos_cat['Estado'] == 'Completado']
                     
                     with st.form(key=f'form_{juego_seleccionado}_{i}'):
-                        # Mensaje si el filtro deja la lista vacía
                         if trofeos_cat.empty:
                             st.info(f"No hay trofeos {filtro_estado.lower()} en esta categoría.")
                             st.form_submit_button("Guardar cambios", disabled=True)
@@ -214,7 +228,7 @@ if os.path.exists('trofeos.csv'):
                             a_eliminar = []
                             
                             for idx, row in trofeos_cat.iterrows():
-                                col_check, col_info, col_del = st.columns([0.5, 4.2, 0.5])
+                                col_check, col_info, col_del = st.columns([0.3, 4.2, 0.5])
                                 
                                 with col_check:
                                     completado = st.checkbox("Hecho", value=(row['Estado'] == 'Completado'), key=f"t_{idx}")
@@ -236,10 +250,10 @@ if os.path.exists('trofeos.csv'):
                                 if a_eliminar:
                                     df_trofeos = df_trofeos.drop(a_eliminar)
                                 
-                                for idx, nuevo_estado in actualizaciones:
-                                    if idx in df_trofeos.index:
-                                        df_trofeos.at[idx, 'Estado'] = nuevo_estado
+                                for idx_update, nuevo_estado in actualizaciones:
+                                    if idx_update in df_trofeos.index:
+                                        df_trofeos.at[idx_update, 'Estado'] = nuevo_estado
                                         
-                                df_trofeos.to_csv('trofeos.csv', index=False)
-                                st.success("¡Cambios guardados con éxito!")
+                                save_data('trofeos', df_trofeos)
+                                st.success("¡Cambios guardados en la nube con éxito!")
                                 st.rerun()
