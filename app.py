@@ -10,7 +10,7 @@ st.set_page_config(page_title="Tracker de Platinos", page_icon="🎮", layout="w
 st.title("🎮 Mi Tracker de Platinos")
 
 # --- CONFIGURACIÓN DE GOOGLE SHEETS ---
-URL_SHEET = "https://docs.google.com/spreadsheets/d/1MLUSLjdDc903Z5SM8h65UtJgKw5w-Bsh_FUoHjzgDWg/edit?usp=drive_link" # REEMPLAZA ESTO CON TU URL REAL
+URL_SHEET = "https://docs.google.com/spreadsheets/d/1MLUSLjdDc903Z5SM8h65UtJgKw5w-Bsh_FUoHjzgDWg/edit?usp=drive_link"
 
 @st.cache_resource
 def init_connection():
@@ -65,11 +65,21 @@ if not df_trofeos.empty:
     if juegos_faltantes:
         nuevos_registros = []
         for j in juegos_faltantes:
-            faltantes = len(df_trofeos[(df_trofeos['Juego'] == j) & (df_trofeos['Estado'] == 'Pendiente')])
+            trofeos_j = df_trofeos[df_trofeos['Juego'] == j]
+            faltantes_totales = len(trofeos_j[trofeos_j['Estado'] == 'Pendiente'])
+            
+            # Evaluar platino solo con Base Game
+            trofeos_base = trofeos_j[trofeos_j['Categoria'] == 'Base Game']
+            if not trofeos_base.empty:
+                pendientes_base = len(trofeos_base[trofeos_base['Estado'] == 'Pendiente'])
+                platino_obj = 'Sí' if pendientes_base == 0 else 'No'
+            else:
+                platino_obj = 'Sí' if faltantes_totales == 0 else 'No'
+                
             nuevos_registros.append({
                 'Juego': j,
-                'Platino_Obtenido': 'Sí' if faltantes == 0 else 'No',
-                'Trofeos_Faltantes': faltantes,
+                'Platino_Obtenido': platino_obj,
+                'Trofeos_Faltantes': faltantes_totales,
                 'Ultima_Actualizacion': pd.Timestamp.today().strftime('%Y-%m-%d')
             })
         
@@ -188,13 +198,22 @@ cambios_en_juegos = False
 for idx, row in df_juegos.iterrows():
     juego = row['Juego']
     trofeos_juego = df_trofeos[df_trofeos['Juego'] == juego]
+    
     if not trofeos_juego.empty:
-        pendientes = len(trofeos_juego[trofeos_juego['Estado'] == 'Pendiente'])
-        platino = 'Sí' if pendientes == 0 else 'No'
+        # Faltantes totales (para saber qué te falta para el 100% del juego + DLCs)
+        pendientes_totales = len(trofeos_juego[trofeos_juego['Estado'] == 'Pendiente'])
         
-        # Validar si hubo cambios antes de actualizar para ahorrar cuota de Google API
-        if str(row['Trofeos_Faltantes']) != str(pendientes) or str(row['Platino_Obtenido']) != platino:
-            df_juegos.at[idx, 'Trofeos_Faltantes'] = pendientes
+        # Evaluación exclusiva del Platino (solo Base Game)
+        trofeos_base = trofeos_juego[trofeos_juego['Categoria'] == 'Base Game']
+        if not trofeos_base.empty:
+            pendientes_base = len(trofeos_base[trofeos_base['Estado'] == 'Pendiente'])
+            platino = 'Sí' if pendientes_base == 0 else 'No'
+        else:
+            # Respaldo por si un juego no tiene DLCs y no se categorizó
+            platino = 'Sí' if pendientes_totales == 0 else 'No'
+        
+        if str(row['Trofeos_Faltantes']) != str(pendientes_totales) or str(row['Platino_Obtenido']) != platino:
+            df_juegos.at[idx, 'Trofeos_Faltantes'] = pendientes_totales
             df_juegos.at[idx, 'Platino_Obtenido'] = platino
             cambios_en_juegos = True
 
