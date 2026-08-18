@@ -10,7 +10,7 @@ st.set_page_config(page_title="Tracker de Platinos", page_icon="🎮", layout="w
 st.title("🎮 Mi Tracker de Platinos")
 
 # --- CONFIGURACIÓN DE GOOGLE SHEETS ---
-URL_SHEET = "URL_DE_TU_GOOGLE_SHEET" # REEMPLAZA ESTO CON TU URL REAL
+URL_SHEET = "https://docs.google.com/spreadsheets/d/1MLUSLjdDc903Z5SM8h65UtJgKw5w-Bsh_FUoHjzgDWg/edit?usp=drive_link" # REEMPLAZA ESTO CON TU URL REAL
 
 @st.cache_resource
 def init_connection():
