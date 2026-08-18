@@ -4,12 +4,13 @@ from bs4 import BeautifulSoup
 import gspread
 from google.oauth2.service_account import Credentials
 import json
+import os
 
 st.set_page_config(page_title="Tracker de Platinos", page_icon="🎮", layout="wide")
 st.title("🎮 Mi Tracker de Platinos")
 
 # --- CONFIGURACIÓN DE GOOGLE SHEETS ---
-URL_SHEET = "https://docs.google.com/spreadsheets/d/1MLUSLjdDc903Z5SM8h65UtJgKw5w-Bsh_FUoHjzgDWg/edit?usp=drive_link" # REEMPLAZA ESTO CON TU URL REAL
+URL_SHEET = "URL_DE_TU_GOOGLE_SHEET" # REEMPLAZA ESTO CON TU URL REAL
 
 @st.cache_resource
 def init_connection():
@@ -17,7 +18,6 @@ def init_connection():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    # Carga las credenciales desde los secretos de Streamlit
     creds_dict = json.loads(st.secrets["gcp_json"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
@@ -54,6 +54,27 @@ cols_trofeos = ['Juego', 'Categoria', 'Trofeo', 'Descripcion', 'Estado']
 
 df_juegos = load_data('mis_juegos', cols_juegos)
 df_trofeos = load_data('trofeos', cols_trofeos)
+
+# --- 🚀 SISTEMA DE AUTO-REPARACIÓN DE BASE DE DATOS ---
+if not df_trofeos.empty:
+    juegos_en_trofeos = df_trofeos['Juego'].unique()
+    juegos_registrados = df_juegos['Juego'].values if not df_juegos.empty else []
+    
+    juegos_faltantes = [j for j in juegos_en_trofeos if j not in juegos_registrados]
+    
+    if juegos_faltantes:
+        nuevos_registros = []
+        for j in juegos_faltantes:
+            faltantes = len(df_trofeos[(df_trofeos['Juego'] == j) & (df_trofeos['Estado'] == 'Pendiente')])
+            nuevos_registros.append({
+                'Juego': j,
+                'Platino_Obtenido': 'Sí' if faltantes == 0 else 'No',
+                'Trofeos_Faltantes': faltantes,
+                'Ultima_Actualizacion': pd.Timestamp.today().strftime('%Y-%m-%d')
+            })
+        
+        df_juegos = pd.concat([df_juegos, pd.DataFrame(nuevos_registros)], ignore_index=True)
+        save_data('mis_juegos', df_juegos)
 
 # --- PANEL DE MÉTRICAS GLOBALES (KPIs) ---
 col1, col2, col3 = st.columns(3)
@@ -162,16 +183,23 @@ if archivo_subido is not None:
             st.sidebar.success(f"¡{nombre_juego} importado con éxito ({len(nuevos_datos)} trofeos)!")
             st.rerun()
 
-# 2. Sincronización y Visualización de Juegos
+# 2. Sincronización Optimizada de Juegos
+cambios_en_juegos = False
 for idx, row in df_juegos.iterrows():
     juego = row['Juego']
     trofeos_juego = df_trofeos[df_trofeos['Juego'] == juego]
     if not trofeos_juego.empty:
         pendientes = len(trofeos_juego[trofeos_juego['Estado'] == 'Pendiente'])
-        df_juegos.at[idx, 'Trofeos_Faltantes'] = pendientes
-        df_juegos.at[idx, 'Platino_Obtenido'] = 'Sí' if pendientes == 0 else 'No'
+        platino = 'Sí' if pendientes == 0 else 'No'
         
-save_data('mis_juegos', df_juegos)
+        # Validar si hubo cambios antes de actualizar para ahorrar cuota de Google API
+        if str(row['Trofeos_Faltantes']) != str(pendientes) or str(row['Platino_Obtenido']) != platino:
+            df_juegos.at[idx, 'Trofeos_Faltantes'] = pendientes
+            df_juegos.at[idx, 'Platino_Obtenido'] = platino
+            cambios_en_juegos = True
+
+if cambios_en_juegos:
+    save_data('mis_juegos', df_juegos)
 
 st.subheader("Tus Juegos Registrados")
 if not df_juegos.empty:
