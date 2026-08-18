@@ -68,9 +68,11 @@ if not df_trofeos.empty:
             trofeos_j = df_trofeos[df_trofeos['Juego'] == j]
             faltantes_totales = len(trofeos_j[trofeos_j['Estado'] == 'Pendiente'])
             
-            # Evaluar platino solo con Base Game
-            trofeos_base = trofeos_j[trofeos_j['Categoria'] == 'Base Game']
-            if not trofeos_base.empty:
+            # Evaluar platino dinámicamente con la PRIMERA categoría (siempre es el Juego Base)
+            categorias_j = trofeos_j['Categoria'].unique()
+            if len(categorias_j) > 0:
+                categoria_base = categorias_j[0]
+                trofeos_base = trofeos_j[trofeos_j['Categoria'] == categoria_base]
                 pendientes_base = len(trofeos_base[trofeos_base['Estado'] == 'Pendiente'])
                 platino_obj = 'Sí' if pendientes_base == 0 else 'No'
             else:
@@ -203,13 +205,14 @@ for idx, row in df_juegos.iterrows():
         # Faltantes totales (para saber qué te falta para el 100% del juego + DLCs)
         pendientes_totales = len(trofeos_juego[trofeos_juego['Estado'] == 'Pendiente'])
         
-        # Evaluación exclusiva del Platino (solo Base Game)
-        trofeos_base = trofeos_juego[trofeos_juego['Categoria'] == 'Base Game']
-        if not trofeos_base.empty:
+        # Evaluación exclusiva del Platino (solo con la primera categoría = Juego Base)
+        categorias_juego = trofeos_juego['Categoria'].unique()
+        if len(categorias_juego) > 0:
+            categoria_base = categorias_juego[0]
+            trofeos_base = trofeos_juego[trofeos_juego['Categoria'] == categoria_base]
             pendientes_base = len(trofeos_base[trofeos_base['Estado'] == 'Pendiente'])
             platino = 'Sí' if pendientes_base == 0 else 'No'
         else:
-            # Respaldo por si un juego no tiene DLCs y no se categorizó
             platino = 'Sí' if pendientes_totales == 0 else 'No'
         
         if str(row['Trofeos_Faltantes']) != str(pendientes_totales) or str(row['Platino_Obtenido']) != platino:
@@ -241,10 +244,10 @@ if not df_trofeos.empty:
         with col_m1:
             st.metric(f"Trofeos de {juego_seleccionado}", f"{completados_j} / {total_j}")
         with col_m2:
-            st.write("Progreso de completitud:")
+            st.write("Progreso de completitud (Incluye DLCs):")
             if total_j > 0:
                 st.progress(completados_j / total_j)
-                st.caption(f"Te faltan {faltantes_j} trofeos para completarlo al 100%")
+                st.caption(f"Te faltan {faltantes_j} trofeos para completar la lista al 100%")
         
         st.write("") 
         
